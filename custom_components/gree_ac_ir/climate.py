@@ -22,6 +22,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     CONF_BROADLINK_ENTITY,
+    CONF_SWING_SUPPORT,
     DOMAIN,
     FAN_MODES,
     GREE_FAN_MODES,
@@ -58,6 +59,7 @@ async def async_setup_entry(
         name=data["name"],
         broadlink_entity=data["broadlink_entity"],
         unique_id=config_entry.entry_id,
+        swing_support=data.get("swing_support", False),
     )
     async_add_entities([entity])
 
@@ -71,16 +73,8 @@ class GreeACClimate(ClimateEntity):
     _attr_min_temp = MIN_TEMP
     _attr_max_temp = MAX_TEMP
     _attr_target_temperature_step = TEMP_STEP
-    _attr_supported_features = (
-        ClimateEntityFeature.TARGET_TEMPERATURE
-        | ClimateEntityFeature.FAN_MODE
-        | ClimateEntityFeature.SWING_MODE
-        | ClimateEntityFeature.TURN_ON
-        | ClimateEntityFeature.TURN_OFF
-    )
     _attr_hvac_modes = HVAC_MODES
     _attr_fan_modes = FAN_MODES
-    _attr_swing_modes = SWING_MODES
 
     def __init__(
         self,
@@ -88,10 +82,25 @@ class GreeACClimate(ClimateEntity):
         name: str,
         broadlink_entity: str,
         unique_id: str,
+        swing_support: bool = False,
     ) -> None:
         """Initialize the Gree AC climate entity."""
         self.hass = hass
         self._broadlink_entity = broadlink_entity
+        self._swing_support = swing_support
+
+        # Set supported features based on swing support
+        features = (
+            ClimateEntityFeature.TARGET_TEMPERATURE
+            | ClimateEntityFeature.FAN_MODE
+            | ClimateEntityFeature.TURN_ON
+            | ClimateEntityFeature.TURN_OFF
+        )
+        if swing_support:
+            features |= ClimateEntityFeature.SWING_MODE
+            self._attr_swing_modes = SWING_MODES
+        
+        self._attr_supported_features = features
 
         # Entity attributes
         self._attr_unique_id = f"gree_ac_ir_{unique_id}"
@@ -108,8 +117,6 @@ class GreeACClimate(ClimateEntity):
         self._current_temperature: float | None = None
         self._fan_mode = "auto"
         self._swing_mode = "off"
-        self._swing_vertical = False
-        self._swing_horizontal = False
 
     @property
     def current_temperature(self) -> float | None:
@@ -159,22 +166,10 @@ class GreeACClimate(ClimateEntity):
 
     async def async_set_swing_mode(self, swing_mode: str) -> None:
         """Set swing mode."""
-        if swing_mode in self._attr_swing_modes:
+        if not self._swing_support:
+            return
+        if hasattr(self, "_attr_swing_modes") and swing_mode in self._attr_swing_modes:
             self._swing_mode = swing_mode
-
-            if swing_mode == "off":
-                self._swing_vertical = False
-                self._swing_horizontal = False
-            elif swing_mode == "vertical":
-                self._swing_vertical = True
-                self._swing_horizontal = False
-            elif swing_mode == "horizontal":
-                self._swing_vertical = False
-                self._swing_horizontal = True
-            elif swing_mode == "both":
-                self._swing_vertical = True
-                self._swing_horizontal = True
-
             await self._send_command()
 
     async def async_turn_on(self) -> None:
@@ -226,41 +221,50 @@ class GreeACClimate(ClimateEntity):
     def _build_gree_command(self) -> bytes:
         """Build Gree protocol 8-byte command.
 
-        Gree YAC1FB protocol structure:
-        - Bytes 0-3: Main command data
-        - Bytes 4-7: Extended data + checksum
-        """
-        # Byte 0: Mode (3 bits) + Power (1 bit) + Fan (2 bits) + SwingV enable (1 bit) + Sleep (1 bit)
-        power = 1 if self._hvac_mode != HVACMode.OFF else 0
-        mode_value = self._hvac_mode.value if self._hvac_mode != HVACMode.OFF else "auto"
-        mode_bits = GREE_MODES.get(mode_value, 0x00)
-        fan_bits = GREE_FAN_MODES.get(self._fan_mode, 0b00)
-        swing_v_enable = 1 if self._swing_vertical else 0
-        byte0 = (mode_bits & 0x07) | (power << 3) | ((fan_bits & 0x03) << 4) | (swing_v_enable << 6)
+        Based on actual IR codes analysis:
+        - Part 1 (bytes 0-3): Main command
+        - Part 2 (bytes 4-7): Extended data (mostly zeros) + checksum
 
-        # Byte 1: Temperature (4 bits, offset from 16°C)
-        temp_bits = max(0, min(15, self._target_temperature - 16))
+        Byte 0: Mode (3 bits) + Power (1 bit) + Fan (2 bits) + extras
+        Byte 1: Temperature (4 bits, value = temp - 16)
+        Byte 2: 0x60 when ON, 0x20 when OFF (Light/features)
+        Byte 3: 0x50 constant
+        Bytes 4-6: 0x00
+        Byte 7: Checksum = (((byte0 & 0x0F) + (byte1 & 0x0F) + 10) & 0x0F) << 4
+        """
+        # Byte 0: Mode (3 bits) + Power (1 bit) + Fan (2 bits)
+        power = 1 if self._hvac_mode != HVACMode.OFF else 0
+        
+        # Get mode bits (use current mode, or keep last mode when off)
+        if self._hvac_mode == HVACMode.OFF:
+            # When turning off, we still need a valid mode
+            mode_bits = GREE_MODES.get("cool", 0x01)
+        else:
+            mode_bits = GREE_MODES.get(self._hvac_mode.value, 0x01)
+        
+        fan_bits = GREE_FAN_MODES.get(self._fan_mode, 0b00)
+        
+        byte0 = (mode_bits & 0x07) | (power << 3) | ((fan_bits & 0x03) << 4)
+
+        # Byte 1: Temperature (offset from 16°C)
+        temp_bits = max(0, min(14, self._target_temperature - 16))
         byte1 = temp_bits & 0x0F
 
-        # Byte 2: Turbo (1 bit) + Light (1 bit) + Health (1 bit) + Dry (1 bit) + SwingV mode (4 bits)
-        byte2 = 0x20  # Light on by default
+        # Byte 2: 0x60 = ON features (light on, etc), 0x20 = OFF
+        byte2 = 0x60 if power else 0x20
 
-        # Byte 3: Reserved / model specific
+        # Byte 3: Constant
         byte3 = 0x50
 
-        # Byte 4: SwingH enable (1 bit) + SwingH mode (4 bits)
-        swing_h_enable = 0x10 if self._swing_horizontal else 0x00
-        byte4 = swing_h_enable
-
-        # Byte 5: Reserved
+        # Bytes 4-6: Reserved (zeros)
+        byte4 = 0x00
         byte5 = 0x00
-
-        # Byte 6: Reserved
         byte6 = 0x00
 
-        # Byte 7: Checksum = ((sum of bytes 0-3) & 0x0F) + 0xA0 (for first block)
-        #         For YAC1FB: simple sum mod 256
-        byte7 = ((byte4 + byte5 + byte6) & 0x0F) + 0xA0
+        # Byte 7: Checksum
+        # Formula: (((byte0 & 0x0F) + (byte1 & 0x0F) + 10) & 0x0F) << 4
+        checksum = (((byte0 & 0x0F) + (byte1 & 0x0F) + 10) & 0x0F) << 4
+        byte7 = checksum
 
         return bytes([byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7])
 

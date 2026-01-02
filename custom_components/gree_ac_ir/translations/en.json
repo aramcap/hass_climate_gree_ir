@@ -6,7 +6,11 @@
         "description": "Select the Broadlink remote entity that will send IR commands to the air conditioner.",
         "data": {
           "broadlink_entity": "Broadlink Remote Entity",
-          "name": "AC Name"
+          "name": "AC Name",
+          "swing_support": "Enable swing control"
+        },
+        "data_description": {
+          "swing_support": "Enable if your AC supports swing/louver control via IR"
         }
       }
     },
@@ -26,7 +30,11 @@
         "description": "Modify the configuration for this AC.",
         "data": {
           "broadlink_entity": "Broadlink Remote Entity",
-          "name": "AC Name"
+          "name": "AC Name",
+          "swing_support": "Enable swing control"
+        },
+        "data_description": {
+          "swing_support": "Enable if your AC supports swing/louver control via IR"
         }
       }
     },

@@ -16,12 +16,13 @@ from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
     TextSelector,
 )
 
-from .const import CONF_BROADLINK_ENTITY, DOMAIN
+from .const import CONF_BROADLINK_ENTITY, CONF_SWING_SUPPORT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ class GreeACIRConfigFlow(ConfigFlow, domain=DOMAIN):
                         )
                     ),
                     vol.Optional(CONF_NAME, default="Gree AC"): TextSelector(),
+                    vol.Optional(CONF_SWING_SUPPORT, default=False): BooleanSelector(),
                 }
             )
         else:
@@ -92,6 +94,7 @@ class GreeACIRConfigFlow(ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_BROADLINK_ENTITY): TextSelector(),
                     vol.Optional(CONF_NAME, default="Gree AC"): TextSelector(),
+                    vol.Optional(CONF_SWING_SUPPORT, default=False): BooleanSelector(),
                 }
             )
             errors["base"] = "no_broadlink_found"
@@ -132,6 +135,7 @@ class GreeACIROptionsFlow(OptionsFlow):
         # Get current values
         current_broadlink = self.config_entry.data.get(CONF_BROADLINK_ENTITY, "")
         current_name = self.config_entry.data.get(CONF_NAME, "Gree AC")
+        current_swing = self.config_entry.data.get(CONF_SWING_SUPPORT, False)
 
         # Get available Broadlink remotes
         broadlink_remotes = _get_broadlink_remotes(self.hass)
@@ -148,6 +152,7 @@ class GreeACIROptionsFlow(OptionsFlow):
                         )
                     ),
                     vol.Optional(CONF_NAME, default=current_name): TextSelector(),
+                    vol.Optional(CONF_SWING_SUPPORT, default=current_swing): BooleanSelector(),
                 }
             )
         else:
@@ -157,6 +162,7 @@ class GreeACIROptionsFlow(OptionsFlow):
                         CONF_BROADLINK_ENTITY, default=current_broadlink
                     ): TextSelector(),
                     vol.Optional(CONF_NAME, default=current_name): TextSelector(),
+                    vol.Optional(CONF_SWING_SUPPORT, default=current_swing): BooleanSelector(),
                 }
             )
 

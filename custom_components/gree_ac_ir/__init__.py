@@ -12,7 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_BROADLINK_ENTITY, DOMAIN
+from .const import CONF_BROADLINK_ENTITY, CONF_SWING_SUPPORT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     broadlink_entity = entry.data[CONF_BROADLINK_ENTITY]
     name = entry.data.get(CONF_NAME, "Gree AC")
+    swing_support = entry.data.get(CONF_SWING_SUPPORT, False)
 
     # Verify the Broadlink entity exists
     state = hass.states.get(broadlink_entity)
@@ -37,6 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         "broadlink_entity": broadlink_entity,
         "name": name,
+        "swing_support": swing_support,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

@@ -5,6 +5,7 @@ MANUFACTURER = "Gree"
 
 # Configuration keys
 CONF_BROADLINK_ENTITY = "broadlink_entity"
+CONF_SWING_SUPPORT = "swing_support"
 
 # Temperature
 MIN_TEMP = 16
@@ -27,13 +28,14 @@ SWING_MODE_BOTH = "both"
 
 SWING_MODES = [SWING_MODE_OFF, SWING_MODE_VERTICAL, SWING_MODE_HORIZONTAL, SWING_MODE_BOTH]
 
-# Gree protocol encoding - Mode mapping
+# Gree protocol encoding - Mode mapping (from actual IR codes)
+# Mode is in bits 0-2 of byte 0
 GREE_MODES = {
-    "heat": 0x00,
-    "cool": 0x02,
-    "dry": 0x03,
-    "fan_only": 0x04,
-    "auto": 0x05,
+    "cool": 0x01,      # 0b001 - Frío
+    "dry": 0x02,       # 0b010 - Seco
+    "fan_only": 0x03,  # 0b011 - Ventilador
+    "heat": 0x04,      # 0b100 - Calor
+    "auto": 0x00,      # 0b000 - Auto
 }
 
 # Gree protocol encoding - Fan speed mapping

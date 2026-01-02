@@ -6,7 +6,11 @@
         "description": "Selecciona la entidad remoto Broadlink que enviará los comandos IR al aire acondicionado.",
         "data": {
           "broadlink_entity": "Entidad Remoto Broadlink",
-          "name": "Nombre del AC"
+          "name": "Nombre del AC",
+          "swing_support": "Habilitar control de lamas"
+        },
+        "data_description": {
+          "swing_support": "Activa si tu AC soporta control de lamas/oscilación por IR"
         }
       }
     },
@@ -26,7 +30,11 @@
         "description": "Modifica la configuración de este AC.",
         "data": {
           "broadlink_entity": "Entidad Remoto Broadlink",
-          "name": "Nombre del AC"
+          "name": "Nombre del AC",
+          "swing_support": "Habilitar control de lamas"
+        },
+        "data_description": {
+          "swing_support": "Activa si tu AC soporta control de lamas/oscilación por IR"
         }
       }
     },
