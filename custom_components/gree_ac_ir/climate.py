@@ -222,25 +222,18 @@ class GreeACClimate(ClimateEntity):
             _LOGGER.error("Error sending IR command: %s", err)
 
     def _build_gree_command(self) -> bytes:
-        """Build Gree protocol 8-byte command.
+        """Build Gree protocol 4-byte command.
 
-        Based on actual IR codes analysis:
-        - Part 1 (bytes 0-3): Main command
-        - Part 2 (bytes 4-7): Extended data (mostly zeros) + checksum
-
-        Byte 0: Mode (3 bits) + Power (1 bit) + Fan (2 bits) + extras
-        Byte 1: Temperature (4 bits, value = temp - 16)
-        Byte 2: 0x60 when ON, 0x20 when OFF (Light/features)
+        Based on actual IR codes analysis from working Daitsu/Gree remote:
+        Byte 0: Mode (3 bits) + Power (1 bit) + Fan (2 bits)
+        Byte 1: Temperature (value = temp - 16, range 0-14)
+        Byte 2: 0x60 when ON, 0x20 when OFF
         Byte 3: 0x50 constant
-        Bytes 4-6: 0x00
-        Byte 7: Checksum = (((byte0 & 0x0F) + (byte1 & 0x0F) + 10) & 0x0F) << 4
         """
-        # Byte 0: Mode (3 bits) + Power (1 bit) + Fan (2 bits)
         power = 1 if self._hvac_mode != HVACMode.OFF else 0
         
         # Get mode bits (use current mode, or keep last mode when off)
         if self._hvac_mode == HVACMode.OFF:
-            # When turning off, we still need a valid mode
             mode_bits = GREE_MODES.get("cool", 0x01)
         else:
             mode_bits = GREE_MODES.get(self._hvac_mode.value, 0x01)
@@ -248,127 +241,91 @@ class GreeACClimate(ClimateEntity):
         fan_bits = GREE_FAN_MODES.get(self._fan_mode, 0b00)
         
         byte0 = (mode_bits & 0x07) | (power << 3) | ((fan_bits & 0x03) << 4)
-
-        # Byte 1: Temperature (offset from 16°C)
-        temp_bits = max(0, min(14, self._target_temperature - 16))
-        byte1 = temp_bits & 0x0F
-
-        # Byte 2: 0x60 = ON features (light on, etc), 0x20 = OFF
+        byte1 = max(0, min(14, self._target_temperature - 16))
         byte2 = 0x60 if power else 0x20
-
-        # Byte 3: Constant
         byte3 = 0x50
 
-        # Bytes 4-6: Reserved (zeros)
-        byte4 = 0x00
-        byte5 = 0x00
-        byte6 = 0x00
-
-        # Byte 7: Checksum
-        # Formula: (((byte0 & 0x0F) + (byte1 & 0x0F) + 10) & 0x0F) << 4
-        checksum = (((byte0 & 0x0F) + (byte1 & 0x0F) + 10) & 0x0F) << 4
-        byte7 = checksum
-
-        return bytes([byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7])
+        return bytes([byte0, byte1, byte2, byte3])
 
     def _encode_ir_packet(self, gree_bytes: bytes) -> bytes:
-        """Encode Gree bytes to Broadlink IR packet format.
+        """Encode Gree 4 bytes to Broadlink IR packet format.
 
-        Gree YAC1FB IR timing:
-        - Header: 9000µs mark + 4500µs space
-        - Bit 0: 620µs mark + 540µs space
-        - Bit 1: 620µs mark + 1680µs space
-        - Connector: 3-bit (010) + 620µs mark + 20000µs space
-        - Footer: 620µs mark
+        Structure (identical to original Daitsu/Gree remote):
+        - Frame 1: Header + 32 bits (4 bytes) + 3-bit connector (010) + footer
+        - Frame break: 0x00 0x02 + gap timing
+        - Frame 2: 28 zero bits + 4-bit checksum + footer
         """
-        # Timing constants (microseconds)
-        HDR_MARK = 9000
-        HDR_SPACE = 4500
-        BIT_MARK = 620
-        ONE_SPACE = 1680
-        ZERO_SPACE = 540
-        MSG_SPACE = 20000
-
-        # Broadlink time unit ≈ 32.84µs (269/8192 seconds)
-        BL_UNIT = 32.84
-
-        def to_bl(us: int) -> int:
-            return int(us / BL_UNIT)
-
-        timings: list[int] = []
-
-        def add_mark_space(mark: int, space: int) -> None:
-            timings.append(to_bl(mark))
-            timings.append(to_bl(space))
-
-        def add_byte(b: int) -> None:
-            """Send byte LSB first."""
-            for _ in range(8):
-                if b & 1:
-                    add_mark_space(BIT_MARK, ONE_SPACE)
-                else:
-                    add_mark_space(BIT_MARK, ZERO_SPACE)
-                b >>= 1
-
-        # Header
-        add_mark_space(HDR_MARK, HDR_SPACE)
-
-        # First 4 bytes
-        for i in range(4):
-            add_byte(gree_bytes[i])
-
-        # 3-bit connector (010 LSB first = 0, 1, 0)
-        add_mark_space(BIT_MARK, ZERO_SPACE)
-        add_mark_space(BIT_MARK, ONE_SPACE)
-        add_mark_space(BIT_MARK, ZERO_SPACE)
-
-        # Message gap
-        add_mark_space(BIT_MARK, MSG_SPACE)
-
-        # Second header
-        add_mark_space(HDR_MARK, HDR_SPACE)
-
-        # Last 4 bytes
-        for i in range(4, 8):
-            add_byte(gree_bytes[i])
-
+        # Timing values in Broadlink raw units (NOT microseconds)
+        # These produce signals identical to the original remote
+        HDR_MARK = 0x011F  # 287 -> ~8740µs
+        HDR_SPACE = 0x90   # 144 -> ~4385µs
+        BIT_MARK = 20      # -> ~609µs
+        ZERO_SPACE = 18    # -> ~548µs
+        ONE_SPACE = 54     # -> ~1644µs
+        FOOTER = 19        # -> ~578µs
+        GAP = 0x81         # 129 -> ~3928µs
+        
+        # Build Frame 1
+        frame1 = bytearray()
+        
+        # Header (extended format for values > 255)
+        frame1.extend([0x00, (HDR_MARK >> 8) & 0xFF, HDR_MARK & 0xFF])
+        frame1.append(HDR_SPACE)
+        
+        # 4 bytes = 32 bits, LSB first
+        for byte in gree_bytes[:4]:
+            for i in range(8):
+                bit = (byte >> i) & 1
+                frame1.append(BIT_MARK)
+                frame1.append(ONE_SPACE if bit else ZERO_SPACE)
+        
+        # Connector: 3 bits (010 LSB first)
+        frame1.extend([BIT_MARK, ZERO_SPACE])  # bit 0
+        frame1.extend([BIT_MARK, ONE_SPACE])   # bit 1
+        frame1.extend([BIT_MARK, ZERO_SPACE])  # bit 0
+        
         # Footer mark
-        timings.append(to_bl(BIT_MARK))
-
-        return self._build_broadlink_packet(timings)
-
-    def _build_broadlink_packet(self, timings: list[int]) -> bytes:
-        """Convert timings to Broadlink packet format.
-
-        Format:
-        - 0x26: IR type
-        - 0x00: No repeat
-        - 2 bytes: data length (little endian)
-        - timing data (values > 255 use 3-byte extended format: 0x00, high, low)
-        - 0x0D, 0x05: end markers
-        - padding to 16-byte boundary
-        """
-        data = bytearray()
-
-        for t in timings:
-            if t > 255:
-                data.append(0x00)
-                data.append((t >> 8) & 0xFF)
-                data.append(t & 0xFF)
-            else:
-                data.append(t)
-
+        frame1.append(FOOTER)
+        
+        # Frame break + gap
+        frame_break = bytearray([0x00, 0x02, GAP])
+        
+        # Calculate Frame 2 checksum: ((b0 & 0xF) + (b1 & 0xF) + 0xA) & 0xF
+        checksum = ((gree_bytes[0] & 0x0F) + (gree_bytes[1] & 0x0F) + 0x0A) & 0x0F
+        
+        # Frame 2: 28 zero bits + 4-bit checksum + footer
+        frame2 = bytearray()
+        
+        # 28 zero bits (56 bytes: mark-space pairs)
+        for _ in range(28):
+            frame2.append(BIT_MARK)
+            frame2.append(ZERO_SPACE)
+        
+        # 4-bit checksum (LSB first)
+        for i in range(4):
+            bit = (checksum >> i) & 1
+            frame2.append(BIT_MARK)
+            frame2.append(ONE_SPACE if bit else ZERO_SPACE)
+        
+        # Footer (mark + terminator)
+        frame2.append(BIT_MARK)
+        frame2.append(0x00)
+        
+        # Combine all parts
+        ir_data = frame1 + frame_break + frame2
+        
+        # Build Broadlink packet
         packet = bytearray()
-        packet.append(0x26)
-        packet.append(0x00)
-        packet.append(len(data) & 0xFF)
-        packet.append((len(data) >> 8) & 0xFF)
-        packet.extend(data)
-        packet.append(0x0D)
-        packet.append(0x05)
-
-        # Pad to 16 bytes
-        while len(packet) % 16:
-            packet.append(0x00)
-
+        packet.append(0x26)  # IR type
+        packet.append(0x00)  # No repeat
+        
+        # Length includes end markers (0x0D 0x05)
+        total_len = len(ir_data) + 2
+        packet.append(total_len & 0xFF)
+        packet.append((total_len >> 8) & 0xFF)
+        
+        packet.extend(ir_data)
+        packet.append(0x0D)  # End marker
+        packet.append(0x05)  # End marker
+        
         return bytes(packet)
