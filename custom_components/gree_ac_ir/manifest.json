@@ -1,5 +1,5 @@
 {
-  "domain": "gree_ac",
+  "domain": "gree_ac_ir",
   "name": "Gree AC IR",
   "codeowners": ["@aramcap"],
   "config_flow": true,
