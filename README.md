@@ -4,7 +4,15 @@
 [![GitHub Release](https://img.shields.io/github/release/aramcap/hass_climate_gree_ir.svg)](https://github.com/aramcap/hass_climate_gree_ir/releases)
 [![License](https://img.shields.io/github/license/aramcap/hass_climate_gree_ir.svg)](LICENSE)
 
-Control your Gree air conditioner via IR using a Broadlink RM device in Home Assistant.
+Control your Gree air conditioner via IR using an **existing Broadlink integration** in Home Assistant.
+
+## How it works
+
+This integration creates a **climate entity** that:
+1. Builds the IR command based on the Gree protocol (temperature, mode, fan, swing)
+2. Sends the command through your existing Broadlink remote entity using `remote.send_command`
+
+**No direct connection to Broadlink devices** - it uses the Broadlink integration already configured in Home Assistant.
 
 ## Features
 
@@ -15,13 +23,13 @@ Control your Gree air conditioner via IR using a Broadlink RM device in Home Ass
 - ✅ Turn On/Off support
 - ✅ UI Configuration (Config Flow)
 - ✅ Multi-language support (English, Spanish)
-- ✅ Compatible with Broadlink RM3/RM4/Mini
+- ✅ Uses existing Broadlink integration (RM3/RM4/Mini)
 
 ## Requirements
 
 - Home Assistant 2024.1.0 or newer
-- Broadlink RM device (RM3, RM4, or Mini)
-- Gree/Daitsu compatible air conditioner
+- **Broadlink integration already configured** with your RM device
+- Gree-compatible air conditioner
 
 ## Installation
 
@@ -41,14 +49,14 @@ Control your Gree air conditioner via IR using a Broadlink RM device in Home Ass
 ### Manual Installation
 
 1. Download the latest release from the [releases page](https://github.com/aramcap/hass_climate_gree_ir/releases)
-2. Extract the `custom_components/gree_ac` folder to your Home Assistant `custom_components` directory
+2. Extract the `custom_components/gree_ac_ir` folder to your Home Assistant `custom_components` directory
 3. Restart Home Assistant
 
 Your directory structure should look like this:
 ```
 config/
 └── custom_components/
-    └── gree_ac/
+    └── gree_ac_ir/
         ├── __init__.py
         ├── climate.py
         ├── config_flow.py
@@ -62,12 +70,19 @@ config/
 
 ## Configuration
 
-### Via UI (Recommended)
+### Prerequisites
+
+Make sure you have the **Broadlink integration** configured in Home Assistant:
+1. Go to **Settings** → **Devices & Services**
+2. Add the Broadlink integration if not already configured
+3. Your Broadlink RM device should appear as a remote entity (e.g., `remote.rm4c_mini`)
+
+### Adding Gree AC IR
 
 1. Go to **Settings** → **Devices & Services**
 2. Click **+ Add Integration**
 3. Search for "Gree AC IR"
-4. Enter the IP address of your Broadlink RM device
+4. Select your Broadlink remote entity from the dropdown
 5. Optionally, provide a custom name for the AC
 6. Click **Submit**
 
@@ -75,7 +90,7 @@ config/
 
 | Option | Description | Required |
 |--------|-------------|----------|
-| Host | IP address of your Broadlink RM device | Yes |
+| Broadlink Remote Entity | The remote entity from Broadlink integration | Yes |
 | Name | Custom name for the AC entity | No (default: "Gree AC") |
 
 ## Usage
@@ -91,7 +106,7 @@ After configuration, a new climate entity will be created. You can control it fr
 
 ```yaml
 type: thermostat
-entity: climate.gree_ac_192_168_1_100
+entity: climate.gree_ac
 ```
 
 ### Example Automation
@@ -106,7 +121,7 @@ automation:
     action:
       - service: climate.set_temperature
         target:
-          entity_id: climate.gree_ac_192_168_1_100
+          entity_id: climate.gree_ac
         data:
           temperature: 24
           hvac_mode: cool
@@ -114,7 +129,7 @@ automation:
 
 ## Supported Models
 
-This integration should work with most Gree and Daitsu air conditioners that use the standard Gree IR protocol, including:
+This integration should work with air conditioners that use the **Gree YAC1FB IR protocol**, including:
 
 - Gree
 - Daitsu
@@ -123,18 +138,16 @@ This integration should work with most Gree and Daitsu air conditioners that use
 
 ## Troubleshooting
 
-### Cannot connect to Broadlink device
+### Broadlink entity not found
 
-1. Ensure the Broadlink device is powered on and connected to your network
-2. Verify the IP address is correct
-3. Check that the device is accessible from Home Assistant (ping test)
-4. Make sure the Broadlink device is authenticated (use the Broadlink app first)
+Make sure the Broadlink integration is properly configured and your remote entity is available in Home Assistant.
 
 ### AC not responding
 
 1. Point the Broadlink device toward the AC's IR receiver
 2. Ensure there are no obstacles blocking the IR signal
-3. Check Home Assistant logs for error messages
+3. Verify the AC uses Gree protocol (try with original remote first)
+4. Check Home Assistant logs for error messages
 
 ### Logs
 
@@ -144,7 +157,7 @@ Enable debug logging by adding this to your `configuration.yaml`:
 logger:
   default: info
   logs:
-    custom_components.gree_ac: debug
+    custom_components.gree_ac_ir: debug
 ```
 
 ## Contributing

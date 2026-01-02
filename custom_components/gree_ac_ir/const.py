@@ -3,8 +3,8 @@
 DOMAIN = "gree_ac_ir"
 MANUFACTURER = "Gree"
 
-# Configuration
-CONF_DEVICE_TYPE = "device_type"
+# Configuration keys
+CONF_BROADLINK_ENTITY = "broadlink_entity"
 
 # Temperature
 MIN_TEMP = 16

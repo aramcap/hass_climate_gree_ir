@@ -3,19 +3,20 @@
     "step": {
       "user": {
         "title": "Set up Gree AC IR",
-        "description": "Enter the IP address of your Broadlink RM device that controls the AC.",
+        "description": "Select the Broadlink remote entity that will send IR commands to the air conditioner.",
         "data": {
-          "host": "Broadlink RM IP Address",
-          "name": "Device Name"
+          "broadlink_entity": "Broadlink Remote Entity",
+          "name": "AC Name"
         }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to Broadlink device. Please check the IP address and ensure the device is online.",
+      "entity_not_found": "The selected Broadlink entity was not found.",
+      "no_broadlink_found": "No Broadlink remotes found. Make sure Broadlink integration is configured first.",
       "unknown": "Unexpected error occurred."
     },
     "abort": {
-      "already_configured": "This device is already configured."
+      "already_configured": "This Broadlink remote is already configured for an AC."
     }
   }
 }

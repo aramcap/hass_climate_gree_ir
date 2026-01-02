@@ -1,4 +1,4 @@
-"""Config flow for Gree/Daitsu AC integration."""
+"""Config flow for Gree AC IR integration."""
 from __future__ import annotations
 
 import logging
@@ -7,57 +7,42 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
-from homeassistant.const import CONF_HOST, CONF_NAME
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.const import CONF_NAME
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
+    TextSelector,
+)
 
-from .const import DOMAIN
+from .const import CONF_BROADLINK_ENTITY, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_HOST): str,
-        vol.Optional(CONF_NAME, default="Gree AC"): str,
-    }
-)
+
+def _get_broadlink_remotes(hass: HomeAssistant) -> list[str]:
+    """Get list of Broadlink remote entities."""
+    entity_reg = er.async_get(hass)
+    remotes = []
+    
+    for entity in entity_reg.entities.values():
+        if entity.domain == "remote" and entity.platform == "broadlink":
+            remotes.append(entity.entity_id)
+    
+    return remotes
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect.
-
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
-    """
-    host = data[CONF_HOST]
-
-    try:
-        import broadlink
-    except ImportError as err:
-        raise CannotConnect("Broadlink library not installed") from err
-
-    try:
-        # Test connection to Broadlink device
-        device = await hass.async_add_executor_job(_test_connection, host)
-    except Exception as err:
-        _LOGGER.error("Error connecting to Broadlink device at %s: %s", host, err)
-        raise CannotConnect(f"Cannot connect to Broadlink device at {host}") from err
-
-    return {"title": data.get(CONF_NAME, f"Gree AC {host}")}
-
-
-def _test_connection(host: str):
-    """Test connection to Broadlink device (runs in executor)."""
-    import broadlink
-
-    device = broadlink.rm((host, 80), None, None)
-    device.auth()
-    return device
-
-
-class GreeACConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Gree AC."""
+class GreeACIRConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Gree AC IR."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        """Get the options flow for this handler."""
+        return GreeACIROptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -65,27 +50,57 @@ class GreeACConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
+        # Get available Broadlink remotes
+        broadlink_remotes = _get_broadlink_remotes(self.hass)
+
         if user_input is not None:
-            # Check if already configured
-            await self.async_set_unique_id(user_input[CONF_HOST])
+            broadlink_entity = user_input[CONF_BROADLINK_ENTITY]
+            
+            # Check if already configured with this Broadlink entity
+            await self.async_set_unique_id(broadlink_entity)
             self._abort_if_unique_id_configured()
 
-            try:
-                info = await validate_input(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except Exception:
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
+            # Verify the entity exists
+            state = self.hass.states.get(broadlink_entity)
+            if state is None:
+                errors["base"] = "entity_not_found"
             else:
-                return self.async_create_entry(title=info["title"], data=user_input)
+                title = user_input.get(CONF_NAME, f"Gree AC ({broadlink_entity})")
+                return self.async_create_entry(title=title, data=user_input)
+
+        # Build schema dynamically with available remotes
+        if broadlink_remotes:
+            data_schema = vol.Schema(
+                {
+                    vol.Required(CONF_BROADLINK_ENTITY): EntitySelector(
+                        EntitySelectorConfig(
+                            domain="remote",
+                            integration="broadlink",
+                        )
+                    ),
+                    vol.Optional(CONF_NAME, default="Gree AC"): TextSelector(),
+                }
+            )
+        else:
+            # No Broadlink remotes found, allow manual entry
+            data_schema = vol.Schema(
+                {
+                    vol.Required(CONF_BROADLINK_ENTITY): TextSelector(),
+                    vol.Optional(CONF_NAME, default="Gree AC"): TextSelector(),
+                }
+            )
+            errors["base"] = "no_broadlink_found"
 
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=data_schema,
             errors=errors,
         )
 
 
-class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
+class GreeACIROptionsFlow:
+    """Handle options flow for Gree AC IR."""
+
+    def __init__(self, config_entry):
+        """Initialize options flow."""
+        self.config_entry = config_entry

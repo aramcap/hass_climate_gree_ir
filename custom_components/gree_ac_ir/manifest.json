@@ -3,10 +3,10 @@
   "name": "Gree AC IR",
   "codeowners": ["@aramcap"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["broadlink"],
   "documentation": "https://github.com/aramcap/hass_climate_gree_ir",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/aramcap/hass_climate_gree_ir/issues",
-  "requirements": ["broadlink>=0.18.0"],
+  "requirements": [],
   "version": "1.0.0"
 }

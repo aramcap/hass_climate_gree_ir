@@ -1,6 +1,11 @@
-"""Climate platform for Gree/Daitsu AC integration."""
+"""Climate platform for Gree AC IR integration.
+
+This integration creates a climate entity that builds Gree IR commands
+and sends them via an existing Broadlink integration in Home Assistant.
+"""
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Any
 
@@ -16,6 +21,7 @@ from homeassistant.helpers.device_info import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    CONF_BROADLINK_ENTITY,
     DOMAIN,
     FAN_MODES,
     GREE_FAN_MODES,
@@ -49,16 +55,15 @@ async def async_setup_entry(
 
     entity = GreeACClimate(
         hass=hass,
-        device=data["device"],
         name=data["name"],
-        host=data["host"],
-        entry_id=config_entry.entry_id,
+        broadlink_entity=data["broadlink_entity"],
+        unique_id=config_entry.entry_id,
     )
     async_add_entities([entity])
 
 
 class GreeACClimate(ClimateEntity):
-    """Represents a Gree/Daitsu air conditioner."""
+    """Climate entity for Gree AC controlled via Broadlink."""
 
     _attr_has_entity_name = True
     _attr_name = None
@@ -80,25 +85,21 @@ class GreeACClimate(ClimateEntity):
     def __init__(
         self,
         hass: HomeAssistant,
-        device,
         name: str,
-        host: str,
-        entry_id: str,
+        broadlink_entity: str,
+        unique_id: str,
     ) -> None:
         """Initialize the Gree AC climate entity."""
         self.hass = hass
-        self._device = device
-        self._host = host
-        self._entry_id = entry_id
+        self._broadlink_entity = broadlink_entity
 
         # Entity attributes
-        self._attr_unique_id = f"gree_ac_{host.replace('.', '_')}"
+        self._attr_unique_id = f"gree_ac_ir_{unique_id}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, host)},
+            identifiers={(DOMAIN, unique_id)},
             name=name,
             manufacturer=MANUFACTURER,
-            model="Air Conditioner",
-            sw_version="1.0.0",
+            model="Gree Air Conditioner",
         )
 
         # AC state
@@ -161,7 +162,6 @@ class GreeACClimate(ClimateEntity):
         if swing_mode in self._attr_swing_modes:
             self._swing_mode = swing_mode
 
-            # Parse horizontal and vertical swing
             if swing_mode == "off":
                 self._swing_vertical = False
                 self._swing_horizontal = False
@@ -189,171 +189,179 @@ class GreeACClimate(ClimateEntity):
         await self._send_command()
 
     async def _send_command(self) -> None:
-        """Send IR command to Broadlink device."""
+        """Build IR payload and send via Broadlink integration."""
         try:
-            # Build Gree command bytes
+            # Build Gree IR payload
             gree_bytes = self._build_gree_command()
+            ir_packet = self._encode_ir_packet(gree_bytes)
+
+            # Convert to base64 (format used by Broadlink integration)
+            b64_command = base64.b64encode(ir_packet).decode("utf-8")
 
             _LOGGER.debug(
-                "Gree command bytes: %s",
+                "Sending Gree IR to %s - Mode: %s, Temp: %d, Fan: %s, Bytes: %s",
+                self._broadlink_entity,
+                self._hvac_mode,
+                self._target_temperature,
+                self._fan_mode,
                 " ".join(f"{b:02X}" for b in gree_bytes),
             )
 
-            # Encode to IR timings and send to Broadlink
-            ir_command = self._encode_ir_command(gree_bytes)
-
-            _LOGGER.debug("Sending IR command (%d bytes)", len(ir_command))
-
-            await self.hass.async_add_executor_job(
-                self._device.send_data, ir_command
+            # Send via Broadlink remote.send_command service
+            await self.hass.services.async_call(
+                "remote",
+                "send_command",
+                {
+                    "entity_id": self._broadlink_entity,
+                    "command": f"b64:{b64_command}",
+                },
+                blocking=True,
             )
 
             self.async_write_ha_state()
+
         except Exception as err:
-            _LOGGER.error("Error sending command: %s", err)
-
-    def _encode_ir_command(self, gree_bytes: bytes) -> bytes:
-        """Encode Gree command bytes to Broadlink IR format.
-
-        Gree IR Protocol (YAC1FB protocol):
-        - Carrier frequency: 38kHz
-        - Header: 9000µs pulse + 4500µs space
-        - Bit 0: 620µs pulse + 540µs space
-        - Bit 1: 620µs pulse + 1650µs space
-        - Message separator: 620µs pulse + 20000µs space
-        - Footer: 620µs pulse
-
-        The 8-byte command is sent as:
-        - First 4 bytes + 3-bit fixed message separator
-        - Last 4 bytes + checksum
-        """
-        # Gree IR timing constants (in microseconds)
-        HEADER_PULSE = 9000
-        HEADER_SPACE = 4500
-        BIT_PULSE = 620
-        BIT_ZERO_SPACE = 540
-        BIT_ONE_SPACE = 1650
-        MESSAGE_SPACE = 20000
-        FOOTER_PULSE = 620
-
-        # Broadlink frequency constant (for 38kHz)
-        # Broadlink uses 269/8192 seconds as time unit ≈ 32.84µs
-        BROADLINK_UNIT = 32.84
-
-        timings: list[int] = []
-
-        def add_pulse_space(pulse_us: int, space_us: int) -> None:
-            """Add a pulse and space to timings."""
-            timings.append(int(pulse_us / BROADLINK_UNIT))
-            timings.append(int(space_us / BROADLINK_UNIT))
-
-        def add_byte(byte: int) -> None:
-            """Add a byte (8 bits, LSB first) to timings."""
-            for _ in range(8):
-                bit = byte & 1
-                if bit:
-                    add_pulse_space(BIT_PULSE, BIT_ONE_SPACE)
-                else:
-                    add_pulse_space(BIT_PULSE, BIT_ZERO_SPACE)
-                byte >>= 1
-
-        # Header
-        add_pulse_space(HEADER_PULSE, HEADER_SPACE)
-
-        # First 4 bytes
-        for i in range(4):
-            add_byte(gree_bytes[i])
-
-        # Fixed 3-bit connector (value: 010 = 2, sent LSB first)
-        add_pulse_space(BIT_PULSE, BIT_ZERO_SPACE)  # bit 0
-        add_pulse_space(BIT_PULSE, BIT_ONE_SPACE)   # bit 1
-        add_pulse_space(BIT_PULSE, BIT_ZERO_SPACE)  # bit 0
-
-        # Message separator
-        add_pulse_space(BIT_PULSE, MESSAGE_SPACE)
-
-        # Second header (shorter)
-        add_pulse_space(HEADER_PULSE, HEADER_SPACE)
-
-        # Last 4 bytes
-        for i in range(4, 8):
-            add_byte(gree_bytes[i])
-
-        # Footer pulse (just pulse, minimal space)
-        timings.append(int(FOOTER_PULSE / BROADLINK_UNIT))
-
-        # Convert to Broadlink format
-        return self._timings_to_broadlink(timings)
-
-    def _timings_to_broadlink(self, timings: list[int]) -> bytes:
-        """Convert IR timings to Broadlink packet format.
-
-        Broadlink format:
-        - Byte 0: 0x26 (IR code identifier)
-        - Byte 1: repeat count (0 = no repeat)
-        - Bytes 2-3: length of timing data (little endian)
-        - Remaining bytes: timing data
-        - End marker: 0x0d, 0x05
-        """
-        # Build timing data
-        timing_data = bytearray()
-
-        for timing in timings:
-            if timing > 255:
-                # Extended format for values > 255
-                timing_data.append(0x00)
-                timing_data.append((timing >> 8) & 0xFF)
-                timing_data.append(timing & 0xFF)
-            else:
-                timing_data.append(timing)
-
-        # Build Broadlink packet
-        packet = bytearray()
-        packet.append(0x26)  # IR identifier
-        packet.append(0x00)  # No repeat
-        packet.append(len(timing_data) & 0xFF)  # Length low byte
-        packet.append((len(timing_data) >> 8) & 0xFF)  # Length high byte
-        packet.extend(timing_data)
-        packet.append(0x0D)  # End marker
-        packet.append(0x05)  # End marker
-
-        # Pad to multiple of 16 bytes (Broadlink requirement)
-        while len(packet) % 16 != 0:
-            packet.append(0x00)
-
-        return bytes(packet)
+            _LOGGER.error("Error sending IR command: %s", err)
 
     def _build_gree_command(self) -> bytes:
-        """Build Gree protocol 8-byte command."""
-        # Byte 0: Power + Temperature
+        """Build Gree protocol 8-byte command.
+
+        Gree YAC1FB protocol structure:
+        - Bytes 0-3: Main command data
+        - Bytes 4-7: Extended data + checksum
+        """
+        # Byte 0: Mode (3 bits) + Power (1 bit) + Fan (2 bits) + SwingV enable (1 bit) + Sleep (1 bit)
         power = 1 if self._hvac_mode != HVACMode.OFF else 0
-        temp_bits = max(0, min(14, self._target_temperature - 16))
-        byte0 = (power << 0) | (temp_bits << 2)
-
-        # Byte 1: Timer (disabled)
-        byte1 = 0x00
-
-        # Byte 2: Standard config
-        byte2 = 0x50
-
-        # Byte 3: Mode + Swing Horizontal
-        mode_value = self._hvac_mode.value if self._hvac_mode != HVACMode.OFF else "cool"
-        mode_bits = GREE_MODES.get(mode_value, 0x02)
-        swing_h_bits = 1 if self._swing_horizontal else 0
-        byte3 = (mode_bits << 0) | (swing_h_bits << 4)
-
-        # Byte 4: Swing Vertical + Fan Speed
-        swing_v_bits = 1 if self._swing_vertical else 0
+        mode_value = self._hvac_mode.value if self._hvac_mode != HVACMode.OFF else "auto"
+        mode_bits = GREE_MODES.get(mode_value, 0x00)
         fan_bits = GREE_FAN_MODES.get(self._fan_mode, 0b00)
-        byte4 = (swing_v_bits << 0) | (fan_bits << 4)
+        swing_v_enable = 1 if self._swing_vertical else 0
+        byte0 = (mode_bits & 0x07) | (power << 3) | ((fan_bits & 0x03) << 4) | (swing_v_enable << 6)
 
-        # Byte 5: Display temp
+        # Byte 1: Temperature (4 bits, offset from 16°C)
+        temp_bits = max(0, min(15, self._target_temperature - 16))
+        byte1 = temp_bits & 0x0F
+
+        # Byte 2: Turbo (1 bit) + Light (1 bit) + Health (1 bit) + Dry (1 bit) + SwingV mode (4 bits)
+        byte2 = 0x20  # Light on by default
+
+        # Byte 3: Reserved / model specific
+        byte3 = 0x50
+
+        # Byte 4: SwingH enable (1 bit) + SwingH mode (4 bits)
+        swing_h_enable = 0x10 if self._swing_horizontal else 0x00
+        byte4 = swing_h_enable
+
+        # Byte 5: Reserved
         byte5 = 0x00
 
         # Byte 6: Reserved
         byte6 = 0x00
 
-        # Byte 7: Checksum
-        byte7 = (byte0 + byte1 + byte2 + byte3 + byte4 + byte5 + byte6) % 256
+        # Byte 7: Checksum = ((sum of bytes 0-3) & 0x0F) + 0xA0 (for first block)
+        #         For YAC1FB: simple sum mod 256
+        byte7 = ((byte4 + byte5 + byte6) & 0x0F) + 0xA0
 
         return bytes([byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7])
+
+    def _encode_ir_packet(self, gree_bytes: bytes) -> bytes:
+        """Encode Gree bytes to Broadlink IR packet format.
+
+        Gree YAC1FB IR timing:
+        - Header: 9000µs mark + 4500µs space
+        - Bit 0: 620µs mark + 540µs space
+        - Bit 1: 620µs mark + 1680µs space
+        - Connector: 3-bit (010) + 620µs mark + 20000µs space
+        - Footer: 620µs mark
+        """
+        # Timing constants (microseconds)
+        HDR_MARK = 9000
+        HDR_SPACE = 4500
+        BIT_MARK = 620
+        ONE_SPACE = 1680
+        ZERO_SPACE = 540
+        MSG_SPACE = 20000
+
+        # Broadlink time unit ≈ 32.84µs (269/8192 seconds)
+        BL_UNIT = 32.84
+
+        def to_bl(us: int) -> int:
+            return int(us / BL_UNIT)
+
+        timings: list[int] = []
+
+        def add_mark_space(mark: int, space: int) -> None:
+            timings.append(to_bl(mark))
+            timings.append(to_bl(space))
+
+        def add_byte(b: int) -> None:
+            """Send byte LSB first."""
+            for _ in range(8):
+                if b & 1:
+                    add_mark_space(BIT_MARK, ONE_SPACE)
+                else:
+                    add_mark_space(BIT_MARK, ZERO_SPACE)
+                b >>= 1
+
+        # Header
+        add_mark_space(HDR_MARK, HDR_SPACE)
+
+        # First 4 bytes
+        for i in range(4):
+            add_byte(gree_bytes[i])
+
+        # 3-bit connector (010 LSB first = 0, 1, 0)
+        add_mark_space(BIT_MARK, ZERO_SPACE)
+        add_mark_space(BIT_MARK, ONE_SPACE)
+        add_mark_space(BIT_MARK, ZERO_SPACE)
+
+        # Message gap
+        add_mark_space(BIT_MARK, MSG_SPACE)
+
+        # Second header
+        add_mark_space(HDR_MARK, HDR_SPACE)
+
+        # Last 4 bytes
+        for i in range(4, 8):
+            add_byte(gree_bytes[i])
+
+        # Footer mark
+        timings.append(to_bl(BIT_MARK))
+
+        return self._build_broadlink_packet(timings)
+
+    def _build_broadlink_packet(self, timings: list[int]) -> bytes:
+        """Convert timings to Broadlink packet format.
+
+        Format:
+        - 0x26: IR type
+        - 0x00: No repeat
+        - 2 bytes: data length (little endian)
+        - timing data (values > 255 use 3-byte extended format: 0x00, high, low)
+        - 0x0D, 0x05: end markers
+        - padding to 16-byte boundary
+        """
+        data = bytearray()
+
+        for t in timings:
+            if t > 255:
+                data.append(0x00)
+                data.append((t >> 8) & 0xFF)
+                data.append(t & 0xFF)
+            else:
+                data.append(t)
+
+        packet = bytearray()
+        packet.append(0x26)
+        packet.append(0x00)
+        packet.append(len(data) & 0xFF)
+        packet.append((len(data) >> 8) & 0xFF)
+        packet.extend(data)
+        packet.append(0x0D)
+        packet.append(0x05)
+
+        # Pad to 16 bytes
+        while len(packet) % 16:
+            packet.append(0x00)
+
+        return bytes(packet)
