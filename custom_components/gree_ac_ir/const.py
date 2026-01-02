@@ -41,7 +41,7 @@ GREE_MODES = {
 # Gree protocol encoding - Fan speed mapping
 GREE_FAN_MODES = {
     FAN_MODE_AUTO: 0b00,
-    FAN_MODE_MAX: 0b01,
+    FAN_MODE_MAX: 0b11,
     FAN_MODE_MED: 0b10,
-    FAN_MODE_MIN: 0b11,
+    FAN_MODE_MIN: 0b01,
 }
