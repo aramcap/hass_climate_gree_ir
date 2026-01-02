@@ -194,12 +194,15 @@ class GreeACClimate(ClimateEntity):
             b64_command = base64.b64encode(ir_packet).decode("utf-8")
 
             _LOGGER.debug(
-                "Sending Gree IR to %s - Mode: %s, Temp: %d, Fan: %s, Bytes: %s",
+                "Sending Gree IR to %s - Mode: %s, Temp: %d, Fan: %s, "
+                "Gree bytes: [%s], IR packet length: %d, Base64 payload: b64:%s",
                 self._broadlink_entity,
                 self._hvac_mode,
                 self._target_temperature,
                 self._fan_mode,
                 " ".join(f"{b:02X}" for b in gree_bytes),
+                len(ir_packet),
+                b64_command,
             )
 
             # Send via Broadlink remote.send_command service
