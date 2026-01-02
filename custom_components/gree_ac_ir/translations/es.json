@@ -18,5 +18,20 @@
     "abort": {
       "already_configured": "Este remoto Broadlink ya está configurado para un AC."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opciones de Gree AC IR",
+        "description": "Modifica la configuración de este AC.",
+        "data": {
+          "broadlink_entity": "Entidad Remoto Broadlink",
+          "name": "Nombre del AC"
+        }
+      }
+    },
+    "error": {
+      "entity_not_found": "La entidad Broadlink seleccionada no fue encontrada."
+    }
   }
 }
