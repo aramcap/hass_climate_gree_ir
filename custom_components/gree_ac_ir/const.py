@@ -1,6 +1,6 @@
-"""Constants for the Gree/Daitsu AC integration."""
+"""Constants for the Gree AC IR integration."""
 
-DOMAIN = "gree_ac"
+DOMAIN = "gree_ac_ir"
 MANUFACTURER = "Gree"
 
 # Configuration
