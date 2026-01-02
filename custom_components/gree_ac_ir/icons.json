@@ -1,0 +1,10 @@
+{
+  "icons": {
+    "climate": {
+      "default": "mdi:air-conditioner"
+    },
+    "_": {
+      "default": "mdi:air-conditioner"
+    }
+  }
+}
