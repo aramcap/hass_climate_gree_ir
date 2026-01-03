@@ -6,7 +6,6 @@ configured in Home Assistant.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -43,40 +42,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Send OFF command to all entities after setup
-    async def send_initial_off_command() -> None:
-        """Send OFF command to initialize AC state."""
-        # Small delay to ensure entities are fully set up
-        await asyncio.sleep(2)
-        
-        # Get all climate entities for this integration
-        entity_registry = hass.helpers.entity_registry.async_get(hass)
-        entities = [
-            entity.entity_id
-            for entity in entity_registry.entities.values()
-            if entity.config_entry_id == entry.entry_id
-            and entity.domain == Platform.CLIMATE
-        ]
-        
-        for entity_id in entities:
-            _LOGGER.info("Sending initial OFF command to %s", entity_id)
-            try:
-                await hass.services.async_call(
-                    "climate",
-                    "turn_off",
-                    {"entity_id": entity_id},
-                    blocking=True,
-                )
-            except Exception as err:
-                _LOGGER.warning(
-                    "Failed to send initial OFF command to %s: %s",
-                    entity_id,
-                    err,
-                )
-
-    # Schedule the initial OFF command
-    hass.async_create_task(send_initial_off_command())
 
     # Reload entry when options are updated
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))

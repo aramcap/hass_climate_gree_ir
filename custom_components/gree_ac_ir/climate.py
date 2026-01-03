@@ -118,6 +118,25 @@ class GreeACClimate(ClimateEntity):
         self._fan_mode = "auto"
         self._swing_mode = "off"
 
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to hass.
+        
+        Send current state command to sync the AC with Home Assistant state.
+        This runs on HA startup and when the integration is reloaded.
+        """
+        await super().async_added_to_hass()
+        
+        _LOGGER.info(
+            "Syncing %s state: mode=%s, temp=%d, fan=%s",
+            self.entity_id,
+            self._hvac_mode,
+            self._target_temperature,
+            self._fan_mode,
+        )
+        
+        # Send current state to sync the AC
+        await self._send_command()
+
     @property
     def current_temperature(self) -> float | None:
         """Return current temperature."""
